@@ -29,17 +29,43 @@ KEYWORDS = [
     "invoice", "receipt", "tax return", "w-2", "1099", "ein", "password",
     "security code", "cvv", "insurance", "policy number", "vin", "bill of sale",
     "subpoena", "diagnosis", "prescription", "bank statement", "credit card",
+    "american express", "amex",
 ]
 KEYWORD_RES = [(kw, re.compile(r"\b" + re.escape(kw) + r"\b", re.IGNORECASE)) for kw in KEYWORDS]
 SSN_RE = re.compile(r"\b\d{3}-\d{2}-\d{4}\b")
-CC_RE = re.compile(r"\b\d{4}[ -]\d{4}[ -]\d{4}[ -]\d{3,4}\b")
+# Any run of 13-19 digits, loosely grouped with spaces/dashes (or not grouped at
+# all) -- covers Visa/Mastercard/Discover's 4-4-4-4, Amex's 4-6-5, Diners' 4-6-4,
+# and anything else, since we don't hardcode a brand's layout. Luhn validation
+# below is what actually keeps this precise instead of matching arbitrary digit
+# runs (order numbers, chart axes, etc.).
+CARD_CANDIDATE_RE = re.compile(r"\b(?:\d[ -]?){13,19}\b")
+
+
+def luhn_valid(digits):
+    total = 0
+    for i, ch in enumerate(reversed(digits)):
+        n = int(ch)
+        if i % 2 == 1:
+            n *= 2
+            if n > 9:
+                n -= 9
+        total += n
+    return total % 10 == 0
+
+
+def has_card_number(text):
+    for m in CARD_CANDIDATE_RE.finditer(text):
+        digits = re.sub(r"[ -]", "", m.group())
+        if 13 <= len(digits) <= 19 and luhn_valid(digits):
+            return True
+    return False
 
 
 def find_keyword_hits(text):
     hits = [kw for kw, pattern in KEYWORD_RES if pattern.search(text)]
     if SSN_RE.search(text):
         hits.append("ssn-pattern")
-    if CC_RE.search(text):
+    if has_card_number(text):
         hits.append("card-number-pattern")
     return hits
 
