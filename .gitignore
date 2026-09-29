@@ -1,0 +1,14 @@
+venv/
+__pycache__/
+*.pyc
+
+# generated data from running the pipeline -- personal, never commit
+inventory.json
+hashes.jsonl
+dedup_report.csv
+ocr_results.jsonl
+decisions.jsonl
+report.html
+*.log
+
+.DS_Store

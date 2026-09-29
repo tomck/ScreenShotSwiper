@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>ScreenShotSwiper</title>
+<style>
+  :root { color-scheme: dark; }
+  body {
+    font-family: -apple-system, sans-serif; background: #16171a; color: #eee;
+    margin: 0; height: 100vh; display: flex; flex-direction: column; align-items: center;
+    overflow: hidden; user-select: none;
+  }
+  header { padding: 14px; text-align: center; width: 100%; box-sizing: border-box; }
+  .progress { color: #999; font-size: 0.9em; }
+  .tallies span { margin: 0 10px; }
+  .keep { color: #4caf50; } .toss { color: #f44336; } .important { color: #ffb300; }
+
+  .stage { position: relative; flex: 1; width: 100%; display: flex; align-items: center; justify-content: center; }
+  .card {
+    position: absolute; width: min(70vw, 560px); max-height: 72vh;
+    background: #222; border-radius: 14px; box-shadow: 0 8px 30px rgba(0,0,0,.5);
+    display: flex; flex-direction: column; overflow: hidden;
+    touch-action: none; cursor: grab; transition: transform .25s ease, opacity .25s ease;
+  }
+  .card.dragging { transition: none; cursor: grabbing; }
+  .card img { width: 100%; max-height: 55vh; object-fit: contain; background: #000; pointer-events: none; }
+  .meta { padding: 10px 14px; font-size: 0.8em; color: #bbb; overflow-y: auto; max-height: 15vh; }
+  .meta .fn { color: #fff; font-weight: 600; margin-bottom: 4px; }
+  .badges { margin: 4px 0; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 0.75em; margin-right: 6px; }
+  .badge.flag { background: #7a1f1f; color: #ffb4b4; }
+  .badge.dup { background: #2a3a5c; color: #a8c4ff; }
+  .badge.err { background: #444; color: #ccc; }
+  .ocr-text { white-space: pre-wrap; color: #999; font-size: 0.95em; }
+
+  .stamp {
+    position: absolute; top: 30px; padding: 6px 16px; border: 4px solid; border-radius: 8px;
+    font-size: 1.6em; font-weight: 800; opacity: 0; transform: rotate(-15deg);
+  }
+  .stamp.keep { right: 30px; border-color: #4caf50; color: #4caf50; }
+  .stamp.toss { left: 30px; border-color: #f44336; color: #f44336; }
+  .stamp.important { left: 50%; top: 10px; transform: translateX(-50%) rotate(0deg); border-color: #ffb300; color: #ffb300; }
+
+  footer { padding: 14px; display: flex; gap: 20px; align-items: center; }
+  button {
+    background: #2a2b30; color: #eee; border: 1px solid #444; border-radius: 8px;
+    padding: 10px 18px; font-size: 0.95em; cursor: pointer;
+  }
+  button:hover { background: #3a3b40; }
+  .hint { color: #777; font-size: 0.8em; }
+  .empty { text-align: center; color: #999; padding: 40px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="progress" id="progress">loading...</div>
+  <div class="tallies" id="tallies"></div>
+</header>
+
+<div class="stage" id="stage"></div>
+
+<footer>
+  <button id="undoBtn">↩ Undo last</button>
+  <span class="hint">← Toss &nbsp; ↑ Important &nbsp; → Keep &nbsp; (or drag the card)</span>
+</footer>
+
+<script>
+let queueData = null;
+let currentIndex = 0;
+
+async function fetchQueue() {
+  const res = await fetch('/api/queue');
+  queueData = await res.json();
+  currentIndex = 0;
+  render();
+}
+
+function render() {
+  const stage = document.getElementById('stage');
+  stage.innerHTML = '';
+  document.getElementById('progress').textContent =
+    queueData.remaining === 0 ? 'All done!' : `${queueData.remaining} remaining (of ${queueData.total})`;
+  const t = queueData.tallies;
+  document.getElementById('tallies').innerHTML =
+    `<span class="keep">${t.keep} kept</span><span class="toss">${t.toss} tossed</span><span class="important">${t.important} important</span>`;
+
+  if (!queueData.items.length) {
+    stage.innerHTML = '<div class="empty">🎉 Nothing left to review!</div>';
+    return;
+  }
+  // render up to 3 stacked cards, topmost last item in items[0]
+  const visible = queueData.items.slice(0, 3).reverse();
+  visible.forEach((item, i) => {
+    const isTop = i === visible.length - 1;
+    const card = buildCard(item, isTop);
+    const depth = visible.length - 1 - i;
+    card.style.transform = `translateY(${depth * 10}px) scale(${1 - depth * 0.04})`;
+    card.style.zIndex = i;
+    stage.appendChild(card);
+  });
+}
+
+function buildCard(item, isTop) {
+  const card = document.createElement('div');
+  card.className = 'card';
+  const flagBadges = item.keyword_hits.map(k => `<span class="badge flag">${k}</span>`).join('');
+  const dupBadge = item.dup_count ? `<span class="badge dup">${item.dup_count} duplicate(s)</span>` : '';
+  const errBadge = item.ocr_error ? `<span class="badge err">unreadable</span>` : '';
+  card.innerHTML = `
+    <img src="/image?path=${encodeURIComponent(item.path)}">
+    <div class="meta">
+      <div class="fn">${item.filename}</div>
+      <div>${item.date} &middot; ${item.width || '?'}x${item.height || '?'} &middot; ${(item.size/1024).toFixed(0)}KB</div>
+      <div class="badges">${flagBadges}${dupBadge}${errBadge}</div>
+      <div class="ocr-text">${(item.text || '').replace(/</g, '&lt;')}</div>
+    </div>
+    <div class="stamp keep">KEEP</div>
+    <div class="stamp toss">TOSS</div>
+    <div class="stamp important">IMPORTANT</div>
+  `;
+  if (isTop) attachGestures(card, item);
+  return card;
+}
+
+function attachGestures(card, item) {
+  let dragging = false, startX = 0, startY = 0, dx = 0, dy = 0;
+
+  card.addEventListener('pointerdown', e => {
+    dragging = true;
+    card.classList.add('dragging');
+    startX = e.clientX; startY = e.clientY;
+    card.setPointerCapture(e.pointerId);
+  });
+  card.addEventListener('pointermove', e => {
+    if (!dragging) return;
+    dx = e.clientX - startX; dy = e.clientY - startY;
+    const rot = dx / 20;
+    card.style.transform = `translate(${dx}px, ${dy}px) rotate(${rot}deg)`;
+    updateStamps(card, dx, dy);
+  });
+  card.addEventListener('pointerup', () => {
+    if (!dragging) return;
+    dragging = false;
+    card.classList.remove('dragging');
+    resolveDrag(card, item, dx, dy);
+    dx = 0; dy = 0;
+  });
+
+  document.onkeydown = e => {
+    if (!queueData.items.length) return;
+    if (e.key === 'ArrowRight') act(card, item, 'keep');
+    else if (e.key === 'ArrowLeft') act(card, item, 'toss');
+    else if (e.key === 'ArrowUp') { e.preventDefault(); act(card, item, 'important'); }
+  };
+}
+
+function updateStamps(card, dx, dy) {
+  const keep = card.querySelector('.stamp.keep');
+  const toss = card.querySelector('.stamp.toss');
+  const important = card.querySelector('.stamp.important');
+  keep.style.opacity = Math.max(0, Math.min(1, dx / 100));
+  toss.style.opacity = Math.max(0, Math.min(1, -dx / 100));
+  important.style.opacity = (dy < -20 && Math.abs(dy) > Math.abs(dx)) ? Math.min(1, -dy / 100) : 0;
+}
+
+function resolveDrag(card, item, dx, dy) {
+  const THRESH = 100;
+  if (dy < -THRESH && Math.abs(dy) > Math.abs(dx)) act(card, item, 'important');
+  else if (dx > THRESH) act(card, item, 'keep');
+  else if (dx < -THRESH) act(card, item, 'toss');
+  else {
+    card.style.transform = '';
+    updateStamps(card, 0, 0);
+  }
+}
+
+async function act(card, item, action) {
+  document.onkeydown = null;
+  const flyX = action === 'keep' ? 600 : action === 'toss' ? -600 : 0;
+  const flyY = action === 'important' ? -600 : 0;
+  card.style.transform = `translate(${flyX}px, ${flyY}px) rotate(${flyX/20}deg)`;
+  card.style.opacity = '0';
+  await fetch('/api/decide', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({path: item.path, action})
+  });
+  queueData.items.shift();
+  queueData.remaining -= 1;
+  queueData.tallies[action] += 1;
+  setTimeout(() => {
+    if (queueData.items.length < 5) { fetchQueue(); }
+    else { render(); }
+  }, 180);
+}
+
+document.getElementById('undoBtn').addEventListener('click', async () => {
+  await fetch('/api/undo', {method: 'POST'});
+  fetchQueue();
+});
+
+fetchQueue();
+</script>
+</body>
+</html>
