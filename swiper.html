@@ -2,6 +2,7 @@
 <html>
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ScreenShotSwiper</title>
 <style>
   :root { color-scheme: dark; }
@@ -71,6 +72,18 @@
   .result-info .snippet { color: #999; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .result-actions { display: flex; gap: 4px; flex-shrink: 0; }
   .result-actions button { padding: 4px 8px; font-size: 0.8em; }
+
+  .zoom-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,.92); z-index: 200;
+    display: flex; align-items: center; justify-content: center;
+    overflow: auto; touch-action: pinch-zoom pan-x pan-y;
+  }
+  .zoom-overlay img { max-width: none; width: 100%; }
+  .zoom-close {
+    position: fixed; top: 16px; right: 16px; z-index: 201;
+    background: rgba(40,40,40,.8); color: #fff; border: none; border-radius: 50%;
+    width: 36px; height: 36px; font-size: 1.2em; cursor: pointer;
+  }
 </style>
 </head>
 <body>
@@ -84,6 +97,11 @@
 </header>
 
 <div class="stage" id="stage"></div>
+
+<div class="zoom-overlay" id="zoomOverlay" style="display:none">
+  <button class="zoom-close" id="zoomClose">✕</button>
+  <img id="zoomImg" src="">
+</div>
 
 <footer>
   <button id="undoBtn">↩ Undo last</button>
@@ -150,17 +168,19 @@ function buildCard(item, isTop) {
 }
 
 function attachGestures(card, item) {
-  let dragging = false, startX = 0, startY = 0, dx = 0, dy = 0;
+  let dragging = false, startX = 0, startY = 0, dx = 0, dy = 0, maxMove = 0;
 
   card.addEventListener('pointerdown', e => {
     dragging = true;
     card.classList.add('dragging');
     startX = e.clientX; startY = e.clientY;
+    maxMove = 0;
     card.setPointerCapture(e.pointerId);
   });
   card.addEventListener('pointermove', e => {
     if (!dragging) return;
     dx = e.clientX - startX; dy = e.clientY - startY;
+    maxMove = Math.max(maxMove, Math.abs(dx), Math.abs(dy));
     const rot = dx / 20;
     card.style.transform = `translate(${dx}px, ${dy}px) rotate(${rot}deg)`;
     updateStamps(card, dx, dy);
@@ -169,7 +189,14 @@ function attachGestures(card, item) {
     if (!dragging) return;
     dragging = false;
     card.classList.remove('dragging');
-    resolveDrag(card, item, dx, dy);
+    if (maxMove < 8) {
+      // barely moved -- treat as a tap, open full-screen zoom instead of a swipe
+      card.style.transform = '';
+      updateStamps(card, 0, 0);
+      openZoom(item.path);
+    } else {
+      resolveDrag(card, item, dx, dy);
+    }
     dx = 0; dy = 0;
   });
 
@@ -223,6 +250,26 @@ async function act(card, item, action) {
 document.getElementById('undoBtn').addEventListener('click', async () => {
   await fetch('/api/undo', {method: 'POST'});
   fetchQueue();
+});
+
+// ---- tap-to-zoom (pinch/double-tap works natively inside this overlay,
+// since it isn't touch-action-restricted like the swipe card is) ----
+const zoomOverlay = document.getElementById('zoomOverlay');
+const zoomImg = document.getElementById('zoomImg');
+
+function openZoom(path) {
+  zoomImg.src = `/image?path=${encodeURIComponent(path)}`;
+  zoomOverlay.style.display = 'flex';
+  zoomOverlay.scrollTop = 0;
+  zoomOverlay.scrollLeft = 0;
+}
+function closeZoom() {
+  zoomOverlay.style.display = 'none';
+  zoomImg.src = '';
+}
+document.getElementById('zoomClose').addEventListener('click', closeZoom);
+zoomOverlay.addEventListener('click', e => {
+  if (e.target === zoomOverlay) closeZoom();
 });
 
 // ---- search ----
