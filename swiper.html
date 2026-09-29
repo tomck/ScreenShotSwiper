@@ -260,6 +260,11 @@ const zoomOverlay = document.getElementById('zoomOverlay');
 const zoomImg = document.getElementById('zoomImg');
 
 function openZoom(path) {
+  zoomImg.style.transition = '';
+  zoomImg.style.transform = '';
+  zoomOverlay.style.background = '';
+  zoomActivePointers.clear();
+  zoomDragPointerId = null;
   zoomImg.src = `/image?path=${encodeURIComponent(path)}`;
   zoomOverlay.style.display = 'flex';
   zoomOverlay.scrollTop = 0;
@@ -273,6 +278,49 @@ document.getElementById('zoomClose').addEventListener('click', closeZoom);
 zoomOverlay.addEventListener('click', e => {
   if (e.target === zoomOverlay) closeZoom();
 });
+
+// ---- swipe down to dismiss (only when not scrolled/zoomed away from the
+// top, and only tracks a single finger so pinch-zoom is never hijacked) ----
+let zoomDragPointerId = null, zoomDragStartY = 0, zoomDragDy = 0;
+const zoomActivePointers = new Set();
+const DISMISS_THRESHOLD = 100;
+
+zoomOverlay.addEventListener('pointerdown', e => {
+  zoomActivePointers.add(e.pointerId);
+  if (zoomActivePointers.size > 1) {
+    zoomDragPointerId = null;
+    zoomImg.style.transition = 'transform .15s ease';
+    zoomImg.style.transform = '';
+    zoomOverlay.style.background = '';
+    return;
+  }
+  if (zoomOverlay.scrollTop > 2) return;
+  zoomDragPointerId = e.pointerId;
+  zoomDragStartY = e.clientY;
+  zoomDragDy = 0;
+  zoomImg.style.transition = 'none';
+});
+zoomOverlay.addEventListener('pointermove', e => {
+  if (e.pointerId !== zoomDragPointerId) return;
+  const dy = e.clientY - zoomDragStartY;
+  if (dy <= 0) { zoomImg.style.transform = ''; zoomDragDy = 0; return; }
+  zoomDragDy = dy;
+  zoomImg.style.transform = `translateY(${dy}px)`;
+  zoomOverlay.style.background = `rgba(0,0,0,${Math.max(0.3, 0.92 - dy / 400)})`;
+});
+function finishZoomDrag(e) {
+  zoomActivePointers.delete(e.pointerId);
+  if (e.pointerId !== zoomDragPointerId) return;
+  const dy = zoomDragDy;
+  zoomImg.style.transition = 'transform .2s ease';
+  zoomOverlay.style.background = '';
+  zoomDragPointerId = null;
+  zoomDragDy = 0;
+  if (dy > DISMISS_THRESHOLD) closeZoom();
+  else zoomImg.style.transform = '';
+}
+zoomOverlay.addEventListener('pointerup', finishZoomDrag);
+zoomOverlay.addEventListener('pointercancel', finishZoomDrag);
 
 // ---- search ----
 let searchTimer = null;
