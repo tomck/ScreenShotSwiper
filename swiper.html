@@ -49,12 +49,38 @@
   button:hover { background: #3a3b40; }
   .hint { color: #777; font-size: 0.8em; }
   .empty { text-align: center; color: #999; padding: 40px; }
+
+  .search-wrap { margin: 8px auto 0; max-width: 520px; position: relative; }
+  #searchInput {
+    width: 100%; box-sizing: border-box; padding: 8px 12px; font-size: 0.9em;
+    background: #222; border: 1px solid #444; border-radius: 8px; color: #eee;
+  }
+  #searchInput:focus { outline: none; border-color: #777; }
+  .search-results {
+    position: absolute; top: 100%; left: 0; right: 0; margin-top: 6px;
+    background: #222; border: 1px solid #444; border-radius: 8px;
+    max-height: 60vh; overflow-y: auto; z-index: 50; text-align: left;
+    box-shadow: 0 8px 24px rgba(0,0,0,.5);
+  }
+  .search-hint { padding: 8px 12px; color: #888; font-size: 0.8em; }
+  .result-row { display: flex; gap: 10px; padding: 8px 12px; border-bottom: 1px solid #333; align-items: center; }
+  .result-row:last-child { border-bottom: none; }
+  .result-row img { width: 56px; height: 56px; object-fit: cover; border-radius: 4px; background: #000; flex-shrink: 0; }
+  .result-info { flex: 1; min-width: 0; font-size: 0.78em; color: #bbb; }
+  .result-info .fn { color: #fff; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .result-info .snippet { color: #999; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .result-actions { display: flex; gap: 4px; flex-shrink: 0; }
+  .result-actions button { padding: 4px 8px; font-size: 0.8em; }
 </style>
 </head>
 <body>
 <header>
   <div class="progress" id="progress">loading...</div>
   <div class="tallies" id="tallies"></div>
+  <div class="search-wrap" id="searchWrap" style="display:none">
+    <input id="searchInput" type="text" placeholder="Search screenshot text or filename... (OCR)">
+    <div class="search-results" id="searchResults" style="display:none"></div>
+  </div>
 </header>
 
 <div class="stage" id="stage"></div>
@@ -72,6 +98,7 @@ async function fetchQueue() {
   const res = await fetch('/api/queue');
   queueData = await res.json();
   currentIndex = 0;
+  document.getElementById('searchWrap').style.display = queueData.ocr_enabled ? 'block' : 'none';
   render();
 }
 
@@ -197,6 +224,69 @@ document.getElementById('undoBtn').addEventListener('click', async () => {
   await fetch('/api/undo', {method: 'POST'});
   fetchQueue();
 });
+
+// ---- search ----
+let searchTimer = null;
+const searchInput = document.getElementById('searchInput');
+const searchResults = document.getElementById('searchResults');
+
+searchInput.addEventListener('input', () => {
+  clearTimeout(searchTimer);
+  const q = searchInput.value.trim();
+  if (q.length < 2) {
+    searchResults.style.display = 'none';
+    return;
+  }
+  searchTimer = setTimeout(() => runSearch(q), 250);
+});
+
+document.addEventListener('click', e => {
+  if (!e.target.closest('.search-wrap')) searchResults.style.display = 'none';
+});
+
+async function runSearch(q) {
+  const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
+  const data = await res.json();
+  renderSearchResults(data.results, data.total_matches);
+}
+
+function renderSearchResults(results, totalMatches) {
+  searchResults.style.display = 'block';
+  if (!results.length) {
+    searchResults.innerHTML = '<div class="search-hint">No matches among remaining screenshots.</div>';
+    return;
+  }
+  const extra = totalMatches > results.length ? `<div class="search-hint">${totalMatches} matches, showing ${results.length}</div>` : '';
+  searchResults.innerHTML = extra + results.map(r => `
+    <div class="result-row" data-path="${encodeURIComponent(r.path)}">
+      <img src="/image?path=${encodeURIComponent(r.path)}">
+      <div class="result-info">
+        <div class="fn">${r.filename}</div>
+        <div>${r.date} &middot; ${r.dup_count ? r.dup_count + ' dup(s)' : ''}</div>
+        <div class="snippet">${(r.text || '').replace(/</g, '&lt;')}</div>
+      </div>
+      <div class="result-actions">
+        <button data-action="important" title="Mark important">★</button>
+        <button data-action="keep" title="Keep">✓</button>
+        <button data-action="toss" title="Toss">✕</button>
+      </div>
+    </div>
+  `).join('');
+
+  searchResults.querySelectorAll('.result-actions button').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const row = btn.closest('.result-row');
+      const path = decodeURIComponent(row.dataset.path);
+      await fetch('/api/decide', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({path, action: btn.dataset.action})
+      });
+      row.remove();
+      fetchQueue();
+    });
+  });
+}
 
 fetchQueue();
 </script>

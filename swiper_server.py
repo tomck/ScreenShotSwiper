@@ -65,10 +65,13 @@ def load_records():
         if r["is_representative"] == "False":
             dup_by_group.setdefault(r["group_id"], []).append(r["path"])
 
+    ocr_path = HERE / "ocr_results.jsonl"
+    ocr_available = ocr_path.exists()
     ocr = {}
-    for line in open(HERE / "ocr_results.jsonl"):
-        rec = json.loads(line)
-        ocr[rec["path"]] = rec
+    if ocr_available:
+        for line in open(ocr_path):
+            rec = json.loads(line)
+            ocr[rec["path"]] = rec
 
     records = []
     for r in reps:
@@ -89,7 +92,7 @@ def load_records():
             "dup_paths": dups,
         })
     records.sort(key=lambda x: x["mtime"], reverse=True)
-    return records
+    return records, ocr_available
 
 
 def load_decisions():
@@ -110,7 +113,7 @@ def append_decision(rec):
 
 
 app = Flask(__name__)
-ALL_RECORDS = load_records()
+ALL_RECORDS, OCR_ENABLED = load_records()
 BY_PATH = {r["path"]: r for r in ALL_RECORDS}
 
 
@@ -140,7 +143,38 @@ def queue():
             "ocr_error": r["ocr_error"],
             "dup_count": len(r["dup_paths"]),
         })
-    return jsonify({"items": out, "remaining": len(remaining), "total": total, "tallies": tallies})
+    return jsonify({"items": out, "remaining": len(remaining), "total": total, "tallies": tallies,
+                     "ocr_enabled": OCR_ENABLED})
+
+
+def summarize(rec):
+    return {
+        "path": rec["path"],
+        "filename": Path(rec["path"]).name,
+        "date": datetime.fromtimestamp(rec["mtime"]).strftime("%Y-%m-%d") if rec["mtime"] else "",
+        "width": rec["width"], "height": rec["height"], "size": rec["size"],
+        "text": rec["text"][:300],
+        "keyword_hits": rec["keyword_hits"],
+        "dup_count": len(rec["dup_paths"]),
+    }
+
+
+@app.route("/api/search")
+def search():
+    if not OCR_ENABLED:
+        return jsonify({"results": []})
+    q = request.args.get("q", "").strip().lower()
+    if len(q) < 2:
+        return jsonify({"results": []})
+    decided = load_decisions()
+    matches = []
+    for r in ALL_RECORDS:
+        if r["path"] in decided:
+            continue
+        if q in r["text"].lower() or q in Path(r["path"]).name.lower():
+            matches.append(r)
+    matches.sort(key=lambda x: x["mtime"], reverse=True)
+    return jsonify({"results": [summarize(r) for r in matches[:30]], "total_matches": len(matches)})
 
 
 @app.route("/image")

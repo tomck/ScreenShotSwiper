@@ -40,9 +40,17 @@ interrupt and rerun.
 ```bash
 ./venv/bin/python3 01_inventory.py   # finds screenshot-like files
 ./venv/bin/python3 02_dedup.py       # hashes everything, groups exact/near-duplicates
-./venv/bin/python3 03_ocr.py         # OCRs every unique (non-duplicate) screenshot
+./venv/bin/python3 03_ocr.py         # optional -- see below
 ./venv/bin/python3 swiper_server.py  # starts the review UI at http://127.0.0.1:5731
 ```
+
+**`03_ocr.py` is optional.** Run it if you want two extra things: a badge
+flagging screenshots whose text looks sensitive (SSNs, passwords, account
+numbers, etc.) and a search bar in the swipe UI to find a specific
+screenshot by its text or filename. Skip it and the swiper works exactly
+the same otherwise — dedup doesn't depend on OCR at all, so the flags and
+search bar just won't appear (`swiper_server.py` detects whether
+`ocr_results.jsonl` exists and adapts automatically).
 
 Then open **http://127.0.0.1:5731** and start swiping:
 
@@ -56,6 +64,11 @@ Tossing a screenshot also trashes its exact/near-duplicate copies. Your
 progress is saved incrementally (`decisions.jsonl`), so you can close the
 tab and pick up later exactly where you left off. There's an **Undo**
 button if you swipe the wrong way.
+
+If you ran `03_ocr.py`, a search bar appears at the top — type to find a
+specific screenshot by its text or filename among whatever's still
+unreviewed, and act on it directly (keep/toss/important) right from the
+results list without swiping through everything else to find it.
 
 ### Alternative: static report instead of swiping
 
